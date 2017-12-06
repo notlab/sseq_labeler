@@ -57,7 +57,7 @@ def sample_to_tensor(sample):
     return tensor
 
 def target_encode(sample):
-    indicies = [CHARS.find(line[idx]) for idx in range(1, len(idx))]
+    indicies = [CHARS.find(sample[idx]) for idx in range(1, len(sample))]
     indicies.append(N_CHARS - 1)
     return torch.LongTensor(indicies)
 

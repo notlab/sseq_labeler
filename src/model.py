@@ -43,17 +43,19 @@ class LabellerNN(nn.Module):
 
 class GeneratorNN(nn.Module):
     
-    def __init__(self, input_size, hidden_size, output_size):
-        super(RNN, self).__init__()
+    def __init__(self, n_categories, input_size, hidden_size, output_size, criterion=nn.NLLLoss(), lr=0.005):
+        super(GeneratorNN, self).__init__()
         self.hidden_size = hidden_size
         self.i2h = nn.Linear(n_categories + input_size + hidden_size, hidden_size)
         self.i2o = nn.Linear(n_categories + input_size + hidden_size, output_size)
         self.o2o = nn.Linear(hidden_size + output_size, output_size)
         self.dropout = nn.Dropout(0.1)
         self.softmax = nn.LogSoftmax()
+        self.criterion = criterion
+        self.lr = lr
 
-    def forward(self, category, input, hidden):
-        input_combined = torch.cat((category, input, hidden), 1)
+    def forward(self, category, ins, hidden):
+        input_combined = torch.cat((category, ins, hidden), 1)
         hidden = self.i2h(input_combined)
         output = self.i2o(input_combined)
         output_combined = torch.cat((hidden, output), 1)
@@ -65,7 +67,7 @@ class GeneratorNN(nn.Module):
     def init_hidden(self):
         return autograd.Variable(torch.zeros(1, self.hidden_size))
 
-    def train(category_tensor, input_line_tensor, target_line_tensor):
+    def train(self, category_tensor, input_line_tensor, target_line_tensor):
         hidden = self.init_hidden()
 
         self.zero_grad()
@@ -74,27 +76,18 @@ class GeneratorNN(nn.Module):
 
         for i in range(input_line_tensor.size()[0]):
             output, hidden = self.__call__(category_tensor, input_line_tensor[i], hidden)
-            loss += criterion(output, target_line_tensor[i])
+            loss += self.criterion(output, target_line_tensor[i])
 
         loss.backward()
 
         for p in self.parameters():
-            p.data.add_(-learning_rate, p.grad.data)
+            p.data.add_(-self.lr, p.grad.data)
 
         return output, loss.data[0] / input_line_tensor.size()[0]
 
     
 import time
 import math
-
-n_hidden = 128
-n_iters = 100000
-print_every = 500
-plot_every = 100
-
-# Keep track of losses for plotting
-current_loss = 0
-all_losses = []
 
 def time_since(since):
     now = time.time()
@@ -103,24 +96,63 @@ def time_since(since):
     s -= m * 60
     return '%dm %ds' % (m, s)
 
-start = time.time()
+def train_labeller():
+    n_hidden = 128
+    n_iters = 100000
+    print_every = 500
+    plot_every = 100
 
-categories, examples = data.inputs()
-n_categories = len(categories)
-rnn = LabellerNN(data.N_CHARS, n_hidden, n_categories, lr=0.01)
+    current_loss = 0
+    all_losses = []
 
-for i in range(1, n_iters + 1):
-    category, sample, category_tensor, sample_tensor = data.random_sample(categories, examples)
-    pred, loss = rnn.train(category_tensor, sample_tensor)
-    current_loss += loss
+    categories, examples = data.inputs()
+    n_categories = len(categories)
+    rnn = LabellerNN(data.N_CHARS, n_hidden, n_categories, lr=0.01)
 
-    # Print iter number, loss, name and guess
-    if i % print_every == 0:
-        guess, guess_i = data.decode_prediction(categories, pred)
-        correct = '✓' if guess == category else '✗ (%s)' % category
-        print('%d %d%% (%s) %.4f %s / %s %s' % (i, i / n_iters * 100, time_since(start), loss, sample, guess, correct))
+    start = time.time()
 
-    # Add current loss avg to list of losses
-    if i % plot_every == 0:
-        all_losses.append(current_loss / plot_every)
-        current_loss = 0
+    for i in range(1, n_iters + 1):
+        category, sample, category_tensor, sample_tensor = data.random_sample(categories, examples)
+        pred, loss = rnn.train(category_tensor, sample_tensor)
+        current_loss += loss
+
+        # Print iter number, loss, name and guess
+        if i % print_every == 0:
+            guess, guess_i = data.decode_prediction(categories, pred)
+            correct = '✓' if guess == category else '✗ (%s)' % category
+            print('%d %d%% (%s) %.4f %s / %s %s' % (i, i / n_iters * 100, time_since(start), loss, sample, guess, correct))
+
+        # Add current loss avg to list of losses
+        if i % plot_every == 0:
+            all_losses.append(current_loss / plot_every)
+            current_loss = 0
+
+def train_generator():
+    n_iters = 100000
+    print_every = 500
+    plot_every = 500
+
+    all_losses = []
+    total_loss = 0
+
+    categories, examples = data.inputs()
+    n_categories = len(categories)
+    rnn = GeneratorNN(n_categories, data.N_CHARS, 128, data.N_CHARS)
+
+    start = time.time()
+
+    for i in range(1, n_iters + 1):
+        category, sample, category_tensor, sample_tensor = data.random_sample(categories, examples, one_hot_categories=True)
+        target_tensor = autograd.Variable(data.target_encode(sample))
+        output, loss = rnn.train(category_tensor, sample_tensor, target_tensor)
+        total_loss += loss
+
+        if i % print_every == 0:
+            print('%s (%d %d%%) %.4f' % (time_since(start), i, i / n_iters * 100, loss))
+            
+        if i % plot_every == 0:
+            all_losses.append(total_loss / plot_every)
+            total_loss = 0
+        
+#train_labeller()
+train_generator()
