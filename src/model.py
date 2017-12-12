@@ -1,3 +1,6 @@
+import time
+import math
+
 import torch
 from torch import nn, autograd
 
@@ -40,6 +43,52 @@ class LabellerNN(nn.Module):
             p.data.add_(-self.lr, p.grad.data)
                 
         return output, loss.data[0]
+
+class LabellerLSTM(nn.Module):
+
+    def __init__(self, in_dim, lstm_dim, hid_dim, out_dim, criterion=nn.NLLLoss(), lr=0.005):
+        super(LabellerLSTM, self).__init__()
+        
+        self.in_dim = in_dim
+        self.lstm_dim = lstm_dim
+        self.hid_dim = hid_dim
+        self.out_dim = out_dim
+        
+        self.i2h_lstm = nn.LSTM(in_dim, lstm_dim)
+        self.i2h = nn.Linear(in_dim, hid_dim)
+        self.h2o = nn.Linear(lstm_dim + hid_dim, out_dim)
+        self.softmax = nn.LogSoftmax()
+        
+        self.criterion = criterion
+        self.lr = lr
+
+    def forward(self, ins, hidden):
+        lstm_out, hidden = self.i2h_lstm(ins, hidden)
+        direct_out = self.i2h(ins)
+        combined_out = torch.cat((lstm_out, direct_out), 1)
+        output = self.h2o(combined_out)
+        output = self.softmax(output)
+        return output, hidden
+
+    def init_hidden(self):
+        return (autograd.Variable(torch.zeros(1, 1, self.lstm_dim)),
+                autograd.Variable(torch.zeros(1, 1, self.lstm_dim)))
+    
+    def train(self, category_tensor, sample_tensor):
+        self.zero_grad()
+            
+        hidden = self.init_hidden()
+        optimizer = optim.SGD(self.parameters(), lr=self.lr)
+
+        for i in range(sample_tensor.size()[0]):
+            output, hidden = self.__call__(sample_tensor[i].view(1, 1, self.in_dim), hidden)
+
+        loss = self.criterion(output, category_tensor)
+        loss.backward()
+        optimizer.step()
+
+        return output, loss.data[0]
+            
 
 class GeneratorNN(nn.Module):
     
@@ -85,9 +134,6 @@ class GeneratorNN(nn.Module):
 
         return output, loss.data[0] / input_line_tensor.size()[0]
 
-    
-import time
-import math
 
 def time_since(since):
     now = time.time()
@@ -154,5 +200,5 @@ def train_generator():
             all_losses.append(total_loss / plot_every)
             total_loss = 0
         
-#train_labeller()
-train_generator()
+train_labeller()
+#train_generator()
